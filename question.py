@@ -41,6 +41,8 @@ def get_authoritative_record(qrecord):
         print("DNS Authoritative Query for qrecord: %s @%s/%s" % (qrecord, auth_ns, ns_addr))
 
         # First we try A record:
+        # TODO: Actually we should always try the A record -- we should just check if there 
+        # is a CNAME record in the response that matches the qname.
         response = None
         try:
             request = dns.message.make_query(qrecord, dns.rdatatype.A)
@@ -50,28 +52,17 @@ def get_authoritative_record(qrecord):
             pass
         if response:
             for answer in response.answer:
-                if answer.rdtype == dns.rdatatype.A:
-                    ttl = answer.ttl
-                    addresses = [str(x) for x in answer]
-                    print("%s IN A %s TTL %s" % (qrecord, addresses, ttl))
-                    return ttl, addresses, dns.rdatatype.A
-
-        # Then we try CNAME:
-        response = None
-        try:
-            request = dns.message.make_query(qrecord, dns.rdatatype.CNAME)
-            response = dns.query.udp(request, ns_addr, timeout=5)
-        except Exception as e:
-            print('Exception while requesting authoritative CNAME Record: %s' % (e))
-            pass
-        if response:
-            for answer in response.answer:
-                if answer.rdtype == dns.rdatatype.CNAME:
-                    ttl = answer.ttl
-                    addresses = [str(x) for x in answer]
-                    print("%s IN CNAME %s TTL %s" % (qrecord, addresses, ttl))
-                    return ttl, addresses, dns.rdatatype.CNAME
-
+                if answer.name.to_text().rstrip('.') == qrecord:
+                    if answer.rdtype == dns.rdatatype.A:
+                        ttl = answer.ttl
+                        addresses = [str(x) for x in answer]
+                        print("%s IN A %s TTL %s" % (qrecord, addresses, ttl))
+                        return ttl, addresses, dns.rdatatype.A
+                    if answer.rdtype == dns.rdatatype.CNAME:
+                        ttl = answer.ttl
+                        addresses = [str(x) for x in answer]
+                        print("%s IN CNAME %s TTL %s" % (qrecord, addresses, ttl))
+                        return ttl, addresses, dns.rdatatype.CNAME
             # Finally we look for NXDOMAIN in the response and use that response as well
             if response.rcode() == dns.rcode.NXDOMAIN:
                 if len(response.authority) >= 1:
@@ -128,7 +119,11 @@ class Question:
         self.positives += 1
 
     def cache_presence_pct(self):
-        return (self.positives / (self.positives + self.negatives)) * 100
+        denominator = self.positives + self.negatives
+        if denominator:
+            return (self.positives / (self.positives + self.negatives)) * 100
+        else:
+            return float(0)
 
     def is_poisoned(self, nameserver, addresses):
         for a in addresses:

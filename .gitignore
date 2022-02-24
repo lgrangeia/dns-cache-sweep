@@ -48,5 +48,5 @@ Thumbs.db
 *.mov
 *.wmv
 
-resolvers.txt
-goodresolvers.txt
+*.txt
+.vscode/

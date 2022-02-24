@@ -29,7 +29,7 @@ def process_dns_pkt(p):
     if not p.haslayer(DNS) or p[DNS].qdcount == 0:
         return False
 
-    qname = p[DNS].qd[0].qname.decode()[:-1]
+    qname = p[DNS].qd[0].qname.decode().rstrip('.')
     resolver_ip = str(p[IP].src)
     ancount = p[DNS].ancount
     rcode = p[DNS].rcode
@@ -47,10 +47,11 @@ def process_dns_pkt(p):
             # If recursion is not available, this is not a good candidate for cache snooping:
             if not recursion_available:
                 myresolvers.resolvers[resolver_ip].misbehaved("Recursion is not available")
+                continue
 
-            if rcode == 0 and recursion_available:
+            # Regular requests:
+            if (question.rdtype == dns.rdatatype.CNAME or question.rdtype == dns.rdatatype.A) and rcode == 0:
                 if ancount == 0:
-                    # TODO: this seems off, and will not work for nxdomains
                     question.add_negative(resolver_ip)
                 else:
                     ttl = int(p[DNS].an[0].ttl)
@@ -79,6 +80,23 @@ def process_dns_pkt(p):
                                 myresolvers.resolvers[resolver_ip].misbehaved("Ignores (and does NOT set) RD Bit")
                             else:
                                 question.add_positive(resolver_ip, ttl)
+
+            # NXDOMAIN requests:
+            if (question.rdtype == dns.rcode.NXDOMAIN):
+                if rcode == dns.rcode.NXDOMAIN:
+                    rdbit = bool(p[DNS].rd)
+                    nscount = p[DNS].nscount
+                    if rdbit:
+                        myresolvers.resolvers[resolver_ip].misbehaved("Ignores (and sets) RD Bit")
+                    else:
+                        if nscount > 0:
+                            ttl = int(p[DNS].ns[0].ttl)
+                            question.add_positive(resolver_ip, ttl)
+                else:
+                    question.add_negative(resolver_ip)
+
+
+
     return False
 
 
@@ -110,7 +128,7 @@ def send_query(nameserver, qname, qtype):
 def recvqueries():
     ifname = args.ifname
     localip = get_if_addr(conf.iface)
-    sniff(iface=ifname, prn=None, filter="udp port 53 and src host not " + localip, store=0,
+    sniff(iface=ifname, prn=None, filter="udp src port 53 and src host not " + localip, store=0,
           stop_filter=process_dns_pkt)
     logger.info("Ending receive thread")
 
@@ -120,8 +138,8 @@ def recvqueries():
 # and interrogates the cache of the pool of resolvers to infer its presence in the cache.
 # It will remove caches from the pool that are unresponsive or don't support non-recursive queries.
 # 
-# If the hostname is the keyword "random", it will "self-calibrate" by querying a list of random hostnames
-# And removing any caches that claim to have that record cache.
+# If the hostname is the keyword "calibrate", it will "self-calibrate" by querying a list of random hostnames
+# And removing any caches that claim to have that record cached.
 # The list will then be refilled with new caches from the list.
 
 
