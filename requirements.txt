@@ -1,0 +1,4 @@
+geoip2
+scapy
+netifaces
+dnspython
