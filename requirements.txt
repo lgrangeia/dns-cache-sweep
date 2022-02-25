@@ -1,4 +1,4 @@
-geoip2
+maxminddb-geolite2
 scapy
 netifaces
 dnspython

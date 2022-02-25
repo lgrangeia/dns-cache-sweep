@@ -9,7 +9,61 @@ import socket
 RANDOM_DOMAIN_SUFFIX = ".zealbino.com"
 
 
-def get_authoritative_record(qrecord):
+def resolve_iteratively(qrecord):
+    """
+    Resolves a record iteratively, starting with the root nameservers
+    """
+
+    qrecord = qrecord.rstrip('.')
+    labels = qrecord.split('.')
+    labels.reverse()
+
+    my_resolvers = [x + '.root-servers.net' for x in 'abcdefghijklm']
+
+    while (my_resolvers):
+        ns_host = random.choice(my_resolvers)
+        ns_addr = socket.gethostbyname(ns_host)
+        print("DNS Authoritative Query for qrecord: %s @%s/%s" % (qrecord, ns_host, ns_addr))
+
+        response = None
+        try:
+            request = dns.message.make_query(qrecord, dns.rdatatype.A)
+            response = dns.query.udp(request, ns_addr, timeout=5)
+        except Exception as e:
+            print('Exception while requesting authoritative A Record: %s' % (e))
+            return None, None, None
+
+        if response.rcode() == dns.rcode.NOERROR:
+            if response.answer:
+                # Response here
+                for answer in response.answer:
+                    if answer.name.to_text().rstrip('.') == qrecord:
+                        if answer.rdtype == dns.rdatatype.A:
+                            ttl = answer.ttl
+                            addresses = [str(x) for x in answer]
+                            print("%s IN A %s TTL %s" % (qrecord, addresses, ttl))
+                            return ttl, addresses, dns.rdatatype.A
+                        if answer.rdtype == dns.rdatatype.CNAME:
+                            ttl = answer.ttl
+                            addresses = [str(x) for x in answer]
+                            print("%s IN CNAME %s TTL %s" % (qrecord, addresses, ttl))
+                            return ttl, addresses, dns.rdatatype.CNAME
+
+            elif response.authority:
+                my_resolvers = []
+                # fetch nameservers and continue
+                for rdata in response.authority:
+                    if rdata.rdtype == dns.rdatatype.NS and qrecord.endswith(str(rdata.name).rstrip('.')):
+                        my_resolvers = [str(x.target).rstrip('.') for x in rdata]
+                if len(my_resolvers) >= 1:
+                    continue
+        if response.rcode() == dns.rcode.NXDOMAIN:
+            if len(response.authority) >= 1:
+                if response.authority[0].rdtype == dns.rdatatype.SOA:
+                    return response.authority[0].ttl, [], dns.rcode.NXDOMAIN
+
+
+def get_authoritative_record_DEPRECATED(qrecord):
     """
     Takes a hostname, finds its authoritative name server and returns the initial
     TTL and ip addresses for the IN A or IN CNAME record.
@@ -85,7 +139,7 @@ class Question:
         else:
             self._qname = qname
             self.is_random = False
-        initial_ttl, addresses, rdtype = get_authoritative_record(self.qname)
+        initial_ttl, addresses, rdtype = resolve_iteratively(self.qname)
         if not initial_ttl:
             print(self.qname)
             raise ValueError('Invalid qname %s' % (self._qname))
